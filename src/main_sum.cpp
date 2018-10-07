@@ -1,10 +1,13 @@
 #include <libutils/misc.h>
 #include <libutils/timer.h>
 #include <libutils/fast_random.h>
+#include <libgpu/context.h>
+#include <libgpu/shared_device_buffer.h>
+#include "cl/sum_cl.h"
 
 
 template<typename T>
-void raiseFail(const T &a, const T &b, std::string message, std::string filename, int line)
+inline void __attribute__((always_inline)) raiseFail(const T &a, const T &b, const char* message, const char* filename, int line)
 {
     if (a != b) {
         std::cerr << message << " But " << a << " != " << b << ", " << filename << ":" << line << std::endl;
@@ -59,6 +62,39 @@ int main(int argc, char **argv)
 
     {
         // TODO: implement on OpenCL
-        // gpu::Device device = gpu::chooseGPUDevice(argc, argv);
+        gpu::Device device = gpu::chooseGPUDevice(argc, argv);
+        gpu::Context context;
+        context.init(device.device_id_opencl);
+        context.activate();
+        ocl::Kernel kernel(sum_kernel, sum_kernel_length, "sum");
+
+        bool printLog = false;
+        kernel.compile(printLog);
+
+        unsigned workGroupSize = 256;
+        unsigned global_work_size = (n + workGroupSize - 1) / workGroupSize * workGroupSize;
+
+        gpu::gpu_mem_32u storage;
+        storage.resizeN(n);
+        storage.writeN(as.data(), n);
+
+        {
+            timer t;
+            for (int iter = 0; iter < benchmarkingIters; iter++) {
+                unsigned sum = 0;
+                gpu::gpu_mem_32u result;
+                result.resizeN(1);
+                result.writeN(&sum, 1);
+
+                gpu::WorkSize size(workGroupSize, global_work_size);
+                kernel.exec(size, storage, n, result);
+
+                result.readN(&sum, 1);
+                EXPECT_THE_SAME(reference_sum, sum, "GPU result should be consistent!");
+                t.nextLap();
+            }
+            std::cout << "GPU: " << t.lapAvg() << "+-" << t.lapStd() << " s" << std::endl;
+            std::cout << "GPU: " << (n / 1000.0 / 1000.0) / t.lapAvg() << " millions/s" << std::endl;
+        }
     }
 }
