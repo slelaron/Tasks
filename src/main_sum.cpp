@@ -7,7 +7,7 @@
 
 
 template<typename T>
-inline void __attribute__((always_inline)) raiseFail(const T &a, const T &b, const char* message, const char* filename, int line)
+inline void raiseFail(const T &a, const T &b, const char* message, const char* filename, int line)
 {
     if (a != b) {
         std::cerr << message << " But " << a << " != " << b << ", " << filename << ":" << line << std::endl;
