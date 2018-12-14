@@ -52,13 +52,16 @@ int main(int argc, char **argv)
         std::cout << "CPU: " << t.lapAvg() << "+-" << t.lapStd() << " s" << std::endl;
         std::cout << "CPU: " << (n/1000/1000) / t.lapAvg() << " millions/s" << std::endl;
     }
-/*
-    gpu::gpu_mem_32f as_gpu;
+
+    gpu::gpu_mem_32f as_gpu, bs_gpu;
     as_gpu.resizeN(n);
+    bs_gpu.resizeN(n);
 
     {
         ocl::Kernel bitonic(bitonic_kernel, bitonic_kernel_length, "bitonic");
         bitonic.compile();
+
+        bool parity = false;
 
         timer t;
         for (int iter = 0; iter < benchmarkingIters; ++iter) {
@@ -68,20 +71,36 @@ int main(int argc, char **argv)
 
             unsigned int workGroupSize = 128;
             unsigned int global_work_size = (n + workGroupSize - 1) / workGroupSize * workGroupSize;
-            bitonic.exec(gpu::WorkSize(workGroupSize, global_work_size),
-                         as_gpu, n);
+
+            parity = false;
+            for (unsigned i = 1; i < n; i *= 2) {
+                for (unsigned size = i; size >= std::min(64u, i); size /= 2) {
+                    if (!parity) {
+                        bitonic.exec(gpu::WorkSize(workGroupSize, global_work_size),
+                                     as_gpu, bs_gpu, n, i, size);
+                    } else {
+                        bitonic.exec(gpu::WorkSize(workGroupSize, global_work_size),
+                                     bs_gpu, as_gpu, n, i, size);
+                    }
+                    parity = !parity;
+                }
+            }
             t.nextLap();
         }
         std::cout << "GPU: " << t.lapAvg() << "+-" << t.lapStd() << " s" << std::endl;
         std::cout << "GPU: " << (n/1000/1000) / t.lapAvg() << " millions/s" << std::endl;
 
-        as_gpu.readN(as.data(), n);
+        if (!parity) {
+            as_gpu.readN(as.data(), n);
+        } else {
+            bs_gpu.readN(as.data(), n);
+        }
     }
 
     // Проверяем корректность результатов
     for (int i = 0; i < n; ++i) {
         EXPECT_THE_SAME(as[i], cpu_sorted[i], "GPU results should be equal to CPU results!");
     }
-*/
+
     return 0;
 }

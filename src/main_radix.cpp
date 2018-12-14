@@ -52,9 +52,17 @@ int main(int argc, char **argv)
         std::cout << "CPU: " << t.lapAvg() << "+-" << t.lapStd() << " s" << std::endl;
         std::cout << "CPU: " << (n/1000/1000) / t.lapAvg() << " millions/s" << std::endl;
     }
-/*
-    gpu::gpu_mem_32u as_gpu;
+
+    gpu::gpu_mem_32u as_gpu, bs_gpu, cs_gpu;
     as_gpu.resizeN(n);
+    bs_gpu.resizeN(n);
+    cs_gpu.resizeN(n);
+
+    gpu::gpu_mem_32u* ass = &as_gpu;
+    gpu::gpu_mem_32u* css = &cs_gpu;
+
+    const unsigned LAST = 16;
+    const unsigned BITS_COUNT = 4;
 
     {
         ocl::Kernel radix(radix_kernel, radix_kernel_length, "radix");
@@ -62,26 +70,46 @@ int main(int argc, char **argv)
 
         timer t;
         for (int iter = 0; iter < benchmarkingIters; ++iter) {
-            as_gpu.writeN(as.data(), n);
+            ass->writeN(as.data(), n);
 
             t.restart(); // Запускаем секундомер после прогрузки данных чтобы замерять время работы кернела, а не трансфер данных
 
-            unsigned int workGroupSize = 128;
-            unsigned int global_work_size = (n + workGroupSize - 1) / workGroupSize * workGroupSize;
-            radix.exec(gpu::WorkSize(workGroupSize, global_work_size),
-                       as_gpu, n);
+            const unsigned int workGroupSize = 128;
+            for (int shift = 0; shift < 32; shift += BITS_COUNT) {
+                std::vector<unsigned> positions_in_buffer{0, 0};
+                std::vector<unsigned> wg_sizes;
+                for (unsigned i = n; i != 1; i = (i + workGroupSize - 1) / workGroupSize) {
+                    wg_sizes.push_back(i);
+                    unsigned int global_work_size = (i + workGroupSize - 1) / workGroupSize * workGroupSize;
+                    unsigned stage = 1u + 2u * (i == n);
+                    radix.exec(gpu::WorkSize(workGroupSize, global_work_size),
+                               *ass, bs_gpu, *css, 0, i, stage, shift, positions_in_buffer.back(), positions_in_buffer[positions_in_buffer.size() - 2]);
+                    positions_in_buffer.push_back(positions_in_buffer.back() + LAST * ((i + workGroupSize - 1) / workGroupSize));
+                }
+                positions_in_buffer.pop_back();
+                unsigned total_sum_ind = positions_in_buffer.back();
+                for (int i = (int)wg_sizes.size() - 1; i >= 0; i--) {
+                    unsigned int global_work_size = (wg_sizes[i] + workGroupSize - 1) / workGroupSize * workGroupSize;
+                    unsigned stage = 6u * (wg_sizes[i] == n) + 8u * ((int)wg_sizes.size() - 1 == i);
+                    radix.exec(gpu::WorkSize(workGroupSize, global_work_size),
+                               *ass, bs_gpu, *css, total_sum_ind, wg_sizes[i], stage, shift, positions_in_buffer.back(), positions_in_buffer[positions_in_buffer.size() - 2]);
+                    positions_in_buffer.pop_back();
+                }
+                std::swap(ass, css);
+            }
+
             t.nextLap();
         }
         std::cout << "GPU: " << t.lapAvg() << "+-" << t.lapStd() << " s" << std::endl;
         std::cout << "GPU: " << (n/1000/1000) / t.lapAvg() << " millions/s" << std::endl;
 
-        as_gpu.readN(as.data(), n);
+        ass->readN(as.data(), n);
     }
 
     // Проверяем корректность результатов
     for (int i = 0; i < n; ++i) {
         EXPECT_THE_SAME(as[i], cpu_sorted[i], "GPU results should be equal to CPU results!");
     }
-*/
+
     return 0;
 }
